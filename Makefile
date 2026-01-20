@@ -19,3 +19,10 @@ coverage:
 
 clean:
 	rm -rf $(BUILD_DIR) coverage.out
+
+lint:
+	golangci-lint run
+
+fmt:
+	golangci-lint fmt
+	

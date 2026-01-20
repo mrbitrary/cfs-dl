@@ -22,7 +22,6 @@ func MergeAudioVideo(videoFile, audioFile, outputFile string) error {
 		outputFile,
 	)
 
-	// Capture output for debugging if needed, or redirect to stdout/stderr
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

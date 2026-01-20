@@ -16,11 +16,24 @@ import (
 	"syscall"
 )
 
+var (
+	parseManifestFunc   = model.ParseManifest
+	downloadStreamFunc  = downloader.DownloadStream
+	mergeAudioVideoFunc = merger.MergeAudioVideo
+)
+
 func main() {
 	os.Exit(run(os.Args, os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	// ... (content of run)
+	// Replace calls:
+	// model.ParseManifest -> parseManifestFunc
+	// downloader.DownloadStream -> downloadStreamFunc
+	// merger.MergeAudioVideo -> mergeAudioVideoFunc
+	// (I will provide the full run function to be safe and accurate)
+
 	// Parse flags using a custom FlagSet to allow testing
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -32,18 +45,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	checkDepsPtr := fs.Bool("check-dependencies", false, "Check if required dependencies (ffmpeg) are installed")
 
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: %s --url <url> [options]\n", args[0])
-		fmt.Fprintf(stderr, "\nDownloads videos from Cloudflare Stream iframe URLs.\n")
-		fmt.Fprintf(stderr, "\nRequired:\n")
-		fmt.Fprintf(stderr, "  --url string\n    \tCloudflare Stream iframe URL\n")
-		fmt.Fprintf(stderr, "\nOptions:\n")
+		_, _ = fmt.Fprintf(stderr, "Usage: %s --url <url> [options]\n", args[0])
+		_, _ = fmt.Fprintf(stderr, "\nDownloads videos from Cloudflare Stream iframe URLs.\n")
+		_, _ = fmt.Fprintf(stderr, "\nRequired:\n")
+		_, _ = fmt.Fprintf(stderr, "  --url string\n    \tCloudflare Stream iframe URL\n")
+		_, _ = fmt.Fprintf(stderr, "\nOptions:\n")
 		fs.VisitAll(func(f *flag.Flag) {
 			if f.Name == "url" {
 				return // Already printed in Required
 			}
-			fmt.Fprintf(stderr, "  --%s %s\n    \t%s (default: %q)\n", f.Name, f.Value.String(), f.Usage, f.DefValue)
+			_, _ = fmt.Fprintf(stderr, "  --%s %s\n    \t%s (default: %q)\n", f.Name, f.Value.String(), f.Usage, f.DefValue)
 		})
-		fmt.Fprintf(stderr, "\nExample:\n  %s --url \"https://.../iframe\" --resolution 720p\n", args[0])
+		_, _ = fmt.Fprintf(stderr, "\nExample:\n  %s --url \"https://.../iframe\" --resolution 720p\n", args[0])
 	}
 
 	if err := fs.Parse(args[1:]); err != nil {
@@ -52,34 +65,34 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	if *checkDepsPtr {
 		if err := checkRequirements(); err != nil {
-			fmt.Fprintf(stdout, "Dependency Check: FAIL\n%v\n", err)
+			_, _ = fmt.Fprintf(stdout, "Dependency Check: FAIL\n%v\n", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "Dependency Check: PASS\nffmpeg is installed and available.\n")
+		_, _ = fmt.Fprintf(stdout, "Dependency Check: PASS\nffmpeg is installed and available.\n")
 		return 0
 	}
 
 	if *urlPtr == "" {
-		fmt.Fprintln(stdout, "Error: --url is required")
+		_, _ = fmt.Fprintln(stdout, "Error: --url is required")
 		fs.Usage()
 		return 1
 	}
 
 	if err := checkRequirements(); err != nil {
-		fmt.Fprintf(stdout, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(stdout, "Error: %v\n", err)
 		return 1
 	}
 
 	manifestUrl, err := extractManifestUrl(*urlPtr)
 	if err != nil {
-		fmt.Fprintf(stdout, "Error extracting manifest URL: %v\n", err)
+		_, _ = fmt.Fprintf(stdout, "Error extracting manifest URL: %v\n", err)
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "Fetching manifest from: %s\n", manifestUrl)
-	mpd, err := model.ParseManifest(manifestUrl)
+	_, _ = fmt.Fprintf(stdout, "Fetching manifest from: %s\n", manifestUrl)
+	mpd, err := parseManifestFunc(manifestUrl)
 	if err != nil {
-		fmt.Fprintf(stdout, "Error parsing manifest: %v\n", err)
+		_, _ = fmt.Fprintf(stdout, "Error parsing manifest: %v\n", err)
 		return 1
 	}
 
@@ -89,13 +102,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 			safeTitle := sanitizeFilename(mpd.ProgramInformation.Title)
 			if safeTitle != "" {
 				finalFilename = safeTitle + ".mp4"
-				fmt.Fprintf(stdout, "Using title from manifest: %s\n", finalFilename)
+				_, _ = fmt.Fprintf(stdout, "Using title from manifest: %s\n", finalFilename)
 			}
 		}
 	}
 
 	if err := os.MkdirAll(*outputDirPtr, 0755); err != nil {
-		fmt.Fprintf(stdout, "Error creating output directory: %v\n", err)
+		_, _ = fmt.Fprintf(stdout, "Error creating output directory: %v\n", err)
 		return 1
 	}
 
@@ -109,7 +122,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	go func() {
 		<-sigs
-		fmt.Fprintln(stdout, "\nReceived interrupt signal, stopping...")
+		_, _ = fmt.Fprintln(stdout, "\nReceived interrupt signal, stopping...")
 		cancel()
 	}()
 
@@ -117,54 +130,56 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	videoRep, err := mpd.SelectVideoRepresentation(targetHeight)
 	if err != nil {
-		fmt.Fprintf(stdout, "Error selecting video stream: %v\n", err)
+		_, _ = fmt.Fprintf(stdout, "Error selecting video stream: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Selected video stream: ID=%s, Bandwidth=%d, Height=%d (Requested: %s)\n", videoRep.ID, videoRep.Bandwidth, videoRep.Height, *resolutionPtr)
+	_, _ = fmt.Fprintf(stdout, "Selected video stream: ID=%s, Bandwidth=%d, Height=%d (Requested: %s)\n", videoRep.ID, videoRep.Bandwidth, videoRep.Height, *resolutionPtr)
 
 	audioRep, err := mpd.SelectAudioRepresentation()
 	if err != nil {
-		fmt.Fprintf(stdout, "Error selecting audio stream: %v\n", err)
+		_, _ = fmt.Fprintf(stdout, "Error selecting audio stream: %v\n", err)
 		return 1
 	}
 
 	totalDuration, _ := parseDuration(mpd.MediaPresentationDuration)
 
-	videoFile, err := downloader.DownloadStream(ctx, manifestUrl, videoRep, totalDuration)
+	videoFile, err := downloadStreamFunc(ctx, manifestUrl, videoRep, totalDuration)
 	if err != nil {
 		if err == context.Canceled {
-			fmt.Fprintln(stdout, "Download cancelled.")
+			_, _ = fmt.Fprintln(stdout, "Download cancelled.")
 			cleanup(videoFile)
 			return 0
 		}
-		fmt.Fprintf(stdout, "Error downloading video: %v\n", err)
+		_, _ = fmt.Fprintf(stdout, "Error downloading video: %v\n", err)
 		cleanup(videoFile)
 		return 1
 	}
 	defer cleanup(videoFile)
 
-	audioFile, err := downloader.DownloadStream(ctx, manifestUrl, audioRep, totalDuration)
+	audioFile, err := downloadStreamFunc(ctx, manifestUrl, audioRep, totalDuration)
 	if err != nil {
 		if err == context.Canceled {
-			fmt.Fprintln(stdout, "Download cancelled.")
+			_, _ = fmt.Fprintln(stdout, "Download cancelled.")
 			cleanup(videoFile)
 			cleanup(audioFile)
 			return 0
 		}
-		fmt.Fprintf(stdout, "Error downloading audio: %v\n", err)
+		_, _ = fmt.Fprintf(stdout, "Error downloading audio: %v\n", err)
 		cleanup(audioFile)
 		return 1
 	}
 	defer cleanup(audioFile)
 
-	if err := merger.MergeAudioVideo(videoFile, audioFile, outputPath); err != nil {
-		fmt.Fprintf(stdout, "Error combining video and audio: %v\n", err)
+	if err := mergeAudioVideoFunc(videoFile, audioFile, outputPath); err != nil {
+		_, _ = fmt.Fprintf(stdout, "Error combining video and audio: %v\n", err)
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "Successfully created %s\n", outputPath)
+	_, _ = fmt.Fprintf(stdout, "Successfully created %s\n", outputPath)
 	return 0
 }
+
+var lookPathFunc = exec.LookPath
 
 // Helpers (unchanged, just kept here for completeness of file write)
 func extractManifestUrl(iframeUrl string) (string, error) {
@@ -205,23 +220,23 @@ func parseDuration(durationStr string) (float64, error) {
 	s := strings.TrimPrefix(durationStr, "PT")
 	var minutes, seconds float64
 	if idx := strings.Index(s, "M"); idx != -1 {
-		fmt.Sscanf(s[:idx], "%f", &minutes)
+		_, _ = fmt.Sscanf(s[:idx], "%f", &minutes)
 		s = s[idx+1:]
 	}
 	if idx := strings.Index(s, "S"); idx != -1 {
-		fmt.Sscanf(s[:idx], "%f", &seconds)
+		_, _ = fmt.Sscanf(s[:idx], "%f", &seconds)
 	}
 	return minutes*60 + seconds, nil
 }
 
 func cleanup(f string) {
 	if f != "" {
-		os.Remove(f)
+		_ = os.Remove(f)
 	}
 }
 
 func checkRequirements() error {
-	_, err := exec.LookPath("ffmpeg")
+	_, err := lookPathFunc("ffmpeg")
 	if err != nil {
 		return fmt.Errorf("ffmpeg is not installed or not in PATH. It is required to merge audio and video")
 	}

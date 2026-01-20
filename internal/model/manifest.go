@@ -8,8 +8,8 @@ import (
 )
 
 type MPD struct {
-	XMLName                   xml.Name `xml:"MPD"`
-	MediaPresentationDuration string   `xml:"mediaPresentationDuration,attr"`
+	XMLName                   xml.Name            `xml:"MPD"`
+	MediaPresentationDuration string              `xml:"mediaPresentationDuration,attr"`
 	MinBufferTime             string              `xml:"minBufferTime,attr"`
 	ProgramInformation        *ProgramInformation `xml:"ProgramInformation"`
 	Period                    Period              `xml:"Period"`
@@ -51,7 +51,7 @@ func ParseManifest(url string) (*MPD, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch manifest, status: %s", resp.Status)
@@ -72,7 +72,7 @@ func ParseManifest(url string) (*MPD, error) {
 
 func (mpd *MPD) SelectVideoRepresentation(targetHeight int) (*Representation, error) {
 	var bestRep *Representation
-	var minDiff int = 10000 // Arbitrary large number
+	var minDiff = 10000 // Arbitrary large number
 
 	for _, as := range mpd.Period.AdaptationSets {
 		if as.MimeType == "video/mp4" {
@@ -91,16 +91,13 @@ func (mpd *MPD) SelectVideoRepresentation(targetHeight int) (*Representation, er
 		return nil, fmt.Errorf("no video representation found")
 	}
 
-	// If we didn't find an exact match, warn? For now just return closest.
 	return bestRep, nil
 }
 
 func (mpd *MPD) SelectAudioRepresentation() (*Representation, error) {
-	// Usually just grab the first audio adaptation set
 	for _, as := range mpd.Period.AdaptationSets {
 		if as.MimeType == "audio/mp4" {
 			if len(as.Representations) > 0 {
-				// Often just one, or pick highest bandwidth? Let's pick first for now.
 				return &as.Representations[0], nil
 			}
 		}

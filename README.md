@@ -6,9 +6,9 @@ A simple, fast, and robust CLI tool to download videos from [Cloudflare Stream](
 
 - **Smart Manifest Detection**: Extracts the DASH manifest automatically from an iframe URL.
 - **Resolution Selection**: Selects your desired resolution (e.g., `1080p`) or falls back to the closest available one.
-- **Parallel Downloading**: Downloads video segments concurrently for maximum seed.
+- **Parallel Downloading**: Downloads video segments concurrently for maximum speed.
 - **Auto-Merge**: Merges audio and video streams into a single MP4 file using `ffmpeg`.
-- **Smart Filenames**: Uses the video title from the manifest as the filename.
+- **Smart Filenames**: Uses the video title from the manifest as the filename (sanitized for file system safety).
 - **Graceful Shutdown**: safe cancellation with `Ctrl+C`.
 
 ## Prerequisites
@@ -58,6 +58,7 @@ make clean
 | `--resolution` | Optional | `1080p` | Target video resolution. Falls back to closest available if not found. |
 | `--output-dir` | Optional | `data/download` | Directory to save the output file. |
 | `--filename` | Optional | `output.mp4` | Output filename. Defaults to the video title extracted from the manifest if available. |
+| `--check-dependencies` | Optional | `false` | Check if required dependencies (e.g., ffmpeg) are installed. |
 
 ### Example
 

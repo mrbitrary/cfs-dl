@@ -61,11 +61,11 @@ func TestDownloadStream(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/init.mp4":
-			w.Write([]byte("init data"))
+			_, _ = w.Write([]byte("init data"))
 		case "/media_0.mp4":
-			w.Write([]byte("media 0"))
+			_, _ = w.Write([]byte("media 0"))
 		case "/media_1.mp4":
-			w.Write([]byte("media 1"))
+			_, _ = w.Write([]byte("media 1"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -87,15 +87,17 @@ func TestDownloadStream(t *testing.T) {
 
 	// 2 seconds total, 2 second segments => 1 segment (0 to 0)?
 	// logic: totalSegments = total / segDur
-	// 4 secs total / 2 segDur = 2 segments (0, 1)
-	totalDuration := 4.0
+	// 4 secs total / 2 segDur = 2 segments (0, 1) -> +1 logic makes it 3.
+	// We only mock 2 segments (0, 1), so usage 3.0s total duration.
+	// int(3.0 / 2.0) = 1. 1 + 1 = 2.
+	totalDuration := 3.0
 
 	ctx := context.Background()
 	filename, err := DownloadStream(ctx, ts.URL, rep, totalDuration)
 	if err != nil {
 		t.Fatalf("DownloadStream failed: %v", err)
 	}
-	defer os.Remove(filename)
+	defer func() { _ = os.Remove(filename) }()
 
 	content, err := os.ReadFile(filename)
 	if err != nil {
@@ -132,5 +134,121 @@ func TestDownloadStream_Cancel(t *testing.T) {
 	_, err := DownloadStream(ctx, ts.URL, rep, 10.0)
 	if err == nil {
 		t.Error("expected error on cancel, got nil")
+	}
+}
+
+func TestDownloadStream_InitFail(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	rep := &model.Representation{
+		ID: "test_rep_fail",
+		SegmentTemplate: model.SegmentTemplate{
+			Initialization: "/init.mp4",
+		},
+	}
+
+	ctx := context.Background()
+	_, err := DownloadStream(ctx, ts.URL, rep, 10.0)
+	if err == nil {
+		t.Error("expected error on init failure, got nil")
+	}
+}
+
+func TestDownloadStream_SegmentFail(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/init.mp4":
+			_, _ = w.Write([]byte("init"))
+		case "/media_0.mp4":
+			_, _ = w.Write([]byte("s0"))
+		case "/media_1.mp4":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	rep := &model.Representation{
+		ID: "test_rep_seg_fail",
+		SegmentTemplate: model.SegmentTemplate{
+			Initialization: "/init.mp4",
+			Media:          "/media_$Number$.mp4",
+			StartNumber:    0,
+			Timescale:      1,
+			Duration:       5,
+		},
+	}
+	// Total duration 11s, duration 5s => 2.2 segments => 3 segments (0, 1, 2)
+	// Segment 0 OK, Segment 1 Fail.
+
+	ctx := context.Background()
+	filename, err := DownloadStream(ctx, ts.URL, rep, 11.0)
+	if err == nil {
+		_ = os.Remove(filename)
+		t.Error("expected error when segment download fails, got nil")
+	}
+}
+
+func TestResolveSegmentUrl_Fail(t *testing.T) {
+	// url.Parse fails on control characters
+	_, err := resolveSegmentUrl("http://base.com", "seg\nment.mp4", "id")
+	if err == nil {
+		t.Error("expected error on invalid relative url, got nil")
+	}
+
+	_, err = resolveSegmentUrl("http://ba\nse.com", "segment.mp4", "id")
+	if err == nil {
+		t.Error("expected error on invalid base url, got nil")
+	}
+}
+
+func TestDownloadStream_SegmentNetworkFail(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/init.mp4" {
+			_, _ = w.Write([]byte("init"))
+			return
+		}
+		// Should not be reached for segment if we point it elsewhere
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	rep := &model.Representation{
+		ID: "test_net_fail",
+		SegmentTemplate: model.SegmentTemplate{
+			Initialization: "/init.mp4",
+			Media:          "http://invalid-domain-that-does-not-exist.local/seg.mp4", // Absolute URL override
+			StartNumber:    0,
+			Timescale:      1,
+			Duration:       5,
+		},
+	}
+
+	ctx := context.Background()
+	filename, err := DownloadStream(ctx, ts.URL, rep, 6.0)
+	if err == nil {
+		_ = os.Remove(filename)
+		t.Error("expected error on segment network failure, got nil")
+	}
+}
+
+func TestDownloadStream_InitNetworkFail(t *testing.T) {
+	// Use an invalid URL for init segment
+	rep := &model.Representation{
+		ID: "test_init_net_fail",
+		SegmentTemplate: model.SegmentTemplate{
+			Initialization: "http://invalid-domain.local/init.mp4",
+			Media:          "http://invalid-domain.local/media.mp4",
+		},
+	}
+
+	ctx := context.Background()
+	_, err := DownloadStream(ctx, "http://base.com", rep, 10.0)
+	if err == nil {
+		t.Error("expected error on init network failure, got nil")
 	}
 }

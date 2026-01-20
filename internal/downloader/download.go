@@ -22,7 +22,7 @@ func DownloadStream(ctx context.Context, baseUrl string, rep *model.Representati
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer tmpFile.Close()
+	defer func() { _ = tmpFile.Close() }()
 
 	// 1. Download Initialization Segment
 	initUrl, err := resolveSegmentUrl(baseUrl, rep.SegmentTemplate.Initialization, rep.ID)
@@ -31,43 +31,28 @@ func DownloadStream(ctx context.Context, baseUrl string, rep *model.Representati
 	}
 
 	fmt.Printf("Downloading init segment: %s\n", initUrl)
-	if err := downloadAndAppend(initUrl, tmpFile); err != nil {
+	if err := downloadAndAppend(ctx, initUrl, tmpFile); err != nil {
 		return "", fmt.Errorf("failed to download init segment: %w", err)
 	}
 
 	// 2. Download Media Segments
-	// Calculate total segments execution.
-	// Note: totalDurationSecs comes from MPD "mediaPresentationDuration"
-	// Segment duration is in SegmentTemplate "duration" / "timescale"
+	// Calculate total segments based on duration
 	segDurationSecs := float64(rep.SegmentTemplate.Duration) / float64(rep.SegmentTemplate.Timescale)
 	totalSegments := int(totalDurationSecs / segDurationSecs)
-	// Add a few extra just in case of rounding errors or variable segment lengths,
-	// checking for 404s to stop might be safer but for static DASH usually calculation is fine.
-	// Actually better: loop until 404 if we want to be sure, or trust duration.
-	// Let's trust duration + 1 for now.
+	// Add an extra segment to cover any potential rounding issues or final short segments
 	if totalDurationSecs > 0 && segDurationSecs > 0 {
 		totalSegments++
 	}
 
 	fmt.Printf("Estimated segments: %d (Segment Duration: %.2fs)\n", totalSegments, segDurationSecs)
 
-	// Sequential download for simplicity and appending order
-	// Parallel download is faster but requires assembling in order.
-	// Given the request for a simple tool, let's start sequential or simple parallel.
-	// Parallel is much better for video.
-
-	// Let's implement a simple parallel downloader with an ordered buffer/write.
-	// Or simpler: Download to separate temp files then concat?
-	// Or simplest: Download sequential.
-	// Let's do sequential first to ensure correctness, user can request speed later if needed.
-	// Actually, "downloader" implies we want speed. Let's do parallel 5 workers.
+	workerCount := 5
 
 	jobs := make(chan int, totalSegments)
 	results := make(chan segmentResult, totalSegments)
 	var wg sync.WaitGroup
 
 	// Start workers
-	workerCount := 5
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
 		go func() {
@@ -91,20 +76,15 @@ func DownloadStream(ctx context.Context, baseUrl string, rep *model.Representati
 		}()
 	}
 
-	// Queue jobs
 	startNum := rep.SegmentTemplate.StartNumber
 	endNum := startNum + totalSegments
-	// We might need to adjust endNum based on actual existence.
-	// For now let's try the calculated amount.
 
 	for i := startNum; i < endNum; i++ {
 		jobs <- i
 	}
 	close(jobs)
 
-	// Collect results
-	// We need to write them in order.
-	// We can store them in a map and write as they become available in sequence.
+	// Collect results and write strictly in order
 	segMap := make(map[int][]byte)
 	nextToWrite := startNum
 
@@ -117,8 +97,6 @@ func DownloadStream(ctx context.Context, baseUrl string, rep *model.Representati
 	for res := range results {
 		if res.err != nil {
 			fmt.Printf("Warning: failed to download segment %d: %v\n", res.index, res.err)
-			// Decide if we stop or skip. Skipping breaks the stream usually.
-			// Return error?
 			return "", fmt.Errorf("failed to download segment %d: %w", res.index, res.err)
 		}
 		segMap[res.index] = res.data
@@ -149,8 +127,7 @@ type segmentResult struct {
 }
 
 func downloadSegment(ctx context.Context, baseUrl string, rep *model.Representation, num int) ([]byte, error) {
-	// Replace $Number$ with actual number
-	mediaUrlStr := strings.Replace(rep.SegmentTemplate.Media, "$Number$", fmt.Sprintf("%d", num), -1)
+	mediaUrlStr := strings.ReplaceAll(rep.SegmentTemplate.Media, "$Number$", fmt.Sprintf("%d", num))
 
 	fullUrl, err := resolveSegmentUrl(baseUrl, mediaUrlStr, rep.ID)
 	if err != nil {
@@ -166,7 +143,7 @@ func downloadSegment(ctx context.Context, baseUrl string, rep *model.Representat
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("status %s", resp.Status)
@@ -176,10 +153,7 @@ func downloadSegment(ctx context.Context, baseUrl string, rep *model.Representat
 }
 
 func resolveSegmentUrl(base, relative, repID string) (string, error) {
-	// The URL in the manifest might contain query parameters that need to be preserved
-	// relative might be: "../../something/seg_1.mp4?query=params"
-	// base might be: "https://.../manifest/video.mpd"
-
+	// Preserves query parameters from the manifest URL if present
 	u, err := url.Parse(base)
 	if err != nil {
 		return "", err
@@ -195,12 +169,17 @@ func resolveSegmentUrl(base, relative, repID string) (string, error) {
 	return resolved.String(), nil
 }
 
-func downloadAndAppend(url string, w io.Writer) error {
-	resp, err := http.Get(url)
+func downloadAndAppend(ctx context.Context, url string, w io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("status %s", resp.Status)

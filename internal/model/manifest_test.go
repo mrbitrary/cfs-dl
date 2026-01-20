@@ -2,8 +2,47 @@ package model
 
 import (
 	"encoding/xml"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
+
+func TestParseManifest(t *testing.T) {
+	xmlData := `
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" mediaPresentationDuration="PT5M59.7S">
+  <Period>
+    <AdaptationSet mimeType="video/mp4">
+      <Representation id="1080p" bandwidth="4000000" width="1920" height="1080" />
+    </AdaptationSet>
+  </Period>
+</MPD>`
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(xmlData))
+	}))
+	defer ts.Close()
+
+	mpd, err := ParseManifest(ts.URL)
+	if err != nil {
+		t.Fatalf("ParseManifest failed: %v", err)
+	}
+
+	if mpd.MediaPresentationDuration != "PT5M59.7S" {
+		t.Errorf("expected duration PT5M59.7S, got %s", mpd.MediaPresentationDuration)
+	}
+}
+
+func TestParseManifest_Fail(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	_, err := ParseManifest(ts.URL)
+	if err == nil {
+		t.Error("expected error on 404, got nil")
+	}
+}
 
 func TestSelectVideoRepresentation(t *testing.T) {
 	mpd := &MPD{
@@ -112,5 +151,66 @@ func TestParseManifest_XML(t *testing.T) {
 	}
 	if mpd.ProgramInformation == nil || mpd.ProgramInformation.Title != "Test Video Title" {
 		t.Errorf("expected title 'Test Video Title', got %v", mpd.ProgramInformation)
+	}
+}
+
+func TestParseManifest_BadURL(t *testing.T) {
+	// Test with a URL that causes http.Get to fail immediately (e.g. invalid protocol)
+	_, err := ParseManifest("invalid-protocol://test")
+	if err == nil {
+		t.Error("expected error with invalid protocol, got nil")
+	}
+}
+
+func TestSelectAudioRepresentation_None(t *testing.T) {
+	mpd := &MPD{
+		Period: Period{
+			AdaptationSets: []AdaptationSet{
+				{
+					MimeType: "video/mp4",
+					Representations: []Representation{
+						{ID: "1080p", Height: 1080},
+					},
+				},
+				// No audio adaptation set
+			},
+		},
+	}
+
+	_, err := mpd.SelectAudioRepresentation()
+	if err == nil {
+		t.Error("expected error when no audio representation present, got nil")
+	}
+}
+
+func TestParseManifest_MalformedXML(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<MPD>this is not valid xml"))
+	}))
+	defer ts.Close()
+
+	_, err := ParseManifest(ts.URL)
+	if err == nil {
+		t.Error("expected error on malformed XML, got nil")
+	}
+}
+
+func TestSelectVideoRepresentation_None(t *testing.T) {
+	mpd := &MPD{
+		Period: Period{
+			AdaptationSets: []AdaptationSet{
+				{
+					MimeType: "audio/mp4", // Only audio
+					Representations: []Representation{
+						{ID: "audio", Bandwidth: 100},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := mpd.SelectVideoRepresentation(1080)
+	if err == nil {
+		t.Error("expected error when no video representation present, got nil")
 	}
 }
